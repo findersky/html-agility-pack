@@ -22,10 +22,11 @@ using System.Linq;
 using System.Text;
 using System.Xml;
 using Microsoft.Win32;
-#if NET45 || NETSTANDARD
+#if FX45 || NETSTANDARD
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Threading;
+using System.Collections.Concurrent;
 #endif
 #if FX40 || FX45
 using System.Collections;
@@ -48,14 +49,14 @@ namespace HtmlAgilityPack
     {
         #region Delegates
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Represents the method that will handle the PostResponse event.
         /// </summary>
         public delegate void PostResponseHandler(HttpWebRequest request, HttpWebResponse response);
 #endif
 
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
 /// <summary>
 /// Represents the method that will handle the PostResponse event.
 /// </summary>
@@ -66,13 +67,13 @@ namespace HtmlAgilityPack
         /// </summary>
         public delegate void PreHandleDocumentHandler(HtmlDocument document);
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Represents the method that will handle the PreRequest event.
         /// </summary>
         public delegate bool PreRequestHandler(HttpWebRequest request);
 #endif
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
 /// <summary>
 /// Represents the method that will handle the PostResponse event.
 /// </summary>
@@ -95,6 +96,7 @@ namespace HtmlAgilityPack
         private bool _useCookies;
         private bool _usingCache;
         private bool _usingCacheAndLoad;
+        private bool _usingCacheIfExists;
         private string _userAgent = "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:x.x.x) Gecko/20041107 Firefox/x.x";
 
         /// <summary>
@@ -115,6 +117,21 @@ namespace HtmlAgilityPack
         #endregion
 
         #region Static Members
+
+#if FX45 || NETSTANDARD
+        internal static ConcurrentDictionary<string, HttpClient> SharedHttpClient = new ConcurrentDictionary<string, HttpClient>();
+
+
+        internal static HttpClient GetSharedHttpClient(string userAgent)
+        {
+            return SharedHttpClient.GetOrAdd(userAgent, x =>
+            {
+                var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("User-Agent", userAgent);
+                return client;
+            });
+        }
+#endif
 
         //private static Dictionary<string, string> _mimeTypes;
 
@@ -780,6 +797,10 @@ namespace HtmlAgilityPack
 
         #region Properties
 
+        /// <summary>Gets or sets the automatic decompression.</summary>
+        /// <value>The automatic decompression.</value>
+        public DecompressionMethods AutomaticDecompression { get; set; }
+
         /// <summary>
         /// Gets or Sets a value indicating if document encoding must be automatically detected.
         /// </summary>
@@ -816,6 +837,16 @@ namespace HtmlAgilityPack
 
                 _cacheOnly = value;
             }
+        }
+
+        /// <summary>
+        /// Gets or Sets a value indicating whether to get document from the cache if exists, otherwise from the web
+        /// A value indicating whether to get document from the cache if exists, otherwise from the web
+        /// </summary>
+        public bool UsingCacheIfExists
+        {
+            get { return _usingCacheIfExists; }
+            set { _usingCacheIfExists = value; }
         }
 
         /// <summary>
@@ -919,7 +950,7 @@ namespace HtmlAgilityPack
 
         #region Public Methods
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Gets the MIME content type for a given path extension.
         /// </summary>
@@ -928,37 +959,25 @@ namespace HtmlAgilityPack
         /// <returns>The path extension's MIME content type.</returns>
         public static string GetContentTypeForExtension(string extension, string def)
         {
-            var helper = new PermissionHelper();
             if (string.IsNullOrEmpty(extension))
             {
                 return def;
             }
 
             string contentType = "";
-            if (!helper.GetIsRegistryAvailable())
-            {
-                //if (MimeTypes.ContainsKey(extension))
-                //    contentType = MimeTypes[extension];
-                //else
-                //    contentType = def;
-            }
+	        if (!extension.StartsWith("."))
+	        {
+		        extension = "." + extension;
+	        }
 
-            if (!helper.GetIsDnsAvailable())
-            {
-                //do something.... not at full trust
-                try
-                {
-                    RegistryKey reg = Registry.ClassesRoot;
-                    reg = reg.OpenSubKey(extension, false);
-                    if (reg != null) contentType = (string) reg.GetValue("", def);
-                }
-                catch (Exception)
-                {
-                    contentType = def;
-                }
-            }
+			if (!MimeTypeMap.Mappings.TryGetValue(extension, out contentType))
+	        {
+		        contentType = def;
+	        }
 
-            return contentType;
+
+
+			return contentType;
         }
 
         /// <summary>
@@ -969,41 +988,29 @@ namespace HtmlAgilityPack
         /// <returns>The MIME content type's path extension.</returns>
         public static string GetExtensionForContentType(string contentType, string def)
         {
-            var helper = new PermissionHelper();
-
             if (string.IsNullOrEmpty(contentType))
             {
                 return def;
             }
 
-            string ext = "";
-            if (!helper.GetIsRegistryAvailable())
-            {
-                //if (MimeTypes.ContainsValue(contentType))
-                //{
-                //    foreach (KeyValuePair<string, string> pair in MimeTypes)
-                //        if (pair.Value == contentType)
-                //            return pair.Value;
-                //}
-                return def;
-            }
+	        if (contentType.StartsWith("."))
+	        {
+		        throw new ArgumentException("Requested mime type is not valid: " + contentType);
+	        }
 
-            if (helper.GetIsRegistryAvailable())
-            {
-                try
-                {
-                    RegistryKey reg = Registry.ClassesRoot;
-                    reg = reg.OpenSubKey(@"MIME\Database\Content Type\" + contentType, false);
-                    if (reg != null) ext = (string) reg.GetValue("Extension", def);
-                }
-                catch (Exception)
-                {
-                    ext = def;
-                }
-            }
+			string ext = "";
 
-            return ext;
+	        if (!MimeTypeMap.Mappings.TryGetValue(contentType, out ext))
+	        {
+		        ext = def;
+	        }
+
+			return ext;
         }
+
+
+
+
 
         /// <summary>
         /// Creates an instance of the given type from the specified Internet resource.
@@ -1018,17 +1025,17 @@ namespace HtmlAgilityPack
 #endif
 
 
-        /// <summary>
-        /// Gets an HTML document from an Internet resource and saves it to the specified file.
-        /// </summary>
-        /// <param name="url">The requested URL, such as "http://Myserver/Mypath/Myfile.asp".</param>
-        /// <param name="path">The location of the file where you want to save the document.</param>
-        public void Get(string url, string path)
+                /// <summary>
+                /// Gets an HTML document from an Internet resource and saves it to the specified file.
+                /// </summary>
+                /// <param name="url">The requested URL, such as "http://Myserver/Mypath/Myfile.asp".</param>
+                /// <param name="path">The location of the file where you want to save the document.</param>
+                public void Get(string url, string path)
         {
             Get(url, path, "GET");
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Gets an HTML document from an Internet resource and saves it to the specified file. - Proxy aware
         /// </summary>
@@ -1041,7 +1048,7 @@ namespace HtmlAgilityPack
             Get(url, path, proxy, credentials, "GET");
         }
 #endif
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
 /// <summary>
 /// Gets an HTML document from an Internet resource and saves it to the specified file. - Proxy aware
 /// </summary>
@@ -1064,7 +1071,7 @@ namespace HtmlAgilityPack
         public void Get(string url, string path, string method)
         {
             Uri uri = new Uri(url);
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
             if ((uri.Scheme == Uri.UriSchemeHttps) ||
                 (uri.Scheme == Uri.UriSchemeHttp))
 #else
@@ -1081,7 +1088,7 @@ namespace HtmlAgilityPack
             }
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Gets an HTML document from an Internet resource and saves it to the specified file.  Understands Proxies
         /// </summary>
@@ -1105,7 +1112,7 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
 /// <summary>
 /// Gets an HTML document from an Internet resource and saves it to the specified file.  Understands Proxies
 /// </summary>
@@ -1117,7 +1124,7 @@ namespace HtmlAgilityPack
         public void Get(string url, string path, IWebProxy proxy, ICredentials credentials, string method)
         {
             Uri uri = new Uri(url);
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
             if ((uri.Scheme == Uri.UriSchemeHttps) ||
                 (uri.Scheme == Uri.UriSchemeHttp))
 #else
@@ -1152,20 +1159,30 @@ namespace HtmlAgilityPack
                 throw new HtmlWebException("Cache is not enabled. Set UsingCache to true first.");
             }
 
-            string cachePath;
+			string cachePath;
             if (uri.AbsolutePath == "/")
             {
                 cachePath = Path.Combine(_cachePath, ".htm");
             }
             else
             {
-                if (uri.AbsolutePath[uri.AbsolutePath.Length - 1] == Path.AltDirectorySeparatorChar)
+
+	            string absolutePathWithoutBadChar = uri.AbsolutePath;
+
+	            string invalid = new string(Path.GetInvalidFileNameChars()) + new string(Path.GetInvalidPathChars());
+
+	            foreach (char c in invalid)
+	            {
+		            absolutePathWithoutBadChar = absolutePathWithoutBadChar.Replace(c.ToString(), "");
+	            }
+
+				if (uri.AbsolutePath[uri.AbsolutePath.Length - 1] == Path.AltDirectorySeparatorChar)
                 {
-                    cachePath = Path.Combine(_cachePath, (uri.Host + uri.AbsolutePath.TrimEnd(Path.AltDirectorySeparatorChar)).Replace('/', '\\') + ".htm");
+                    cachePath = Path.Combine(_cachePath, (uri.Host + absolutePathWithoutBadChar.TrimEnd(Path.AltDirectorySeparatorChar)).Replace('/', '\\') + ".htm");
                 }
                 else
                 {
-                    cachePath = Path.Combine(_cachePath, (uri.Host + uri.AbsolutePath.Replace('/', '\\')));
+                    cachePath = Path.Combine(_cachePath, (uri.Host + absolutePathWithoutBadChar.Replace('/', '\\')));
                 }
             }
 
@@ -1192,7 +1209,7 @@ namespace HtmlAgilityPack
             return Load(uri, "GET");
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Gets an HTML document from an Internet resource.
         /// </summary>
@@ -1223,7 +1240,7 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Gets an HTML document from an Internet resource.
         /// </summary>
@@ -1281,7 +1298,7 @@ namespace HtmlAgilityPack
             }
 
             HtmlDocument doc;
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
             if ((uri.Scheme == Uri.UriSchemeHttps) ||
                 (uri.Scheme == Uri.UriSchemeHttp))
 #else
@@ -1294,7 +1311,7 @@ namespace HtmlAgilityPack
             }
             else
             {
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
                 if (uri.Scheme == Uri.UriSchemeFile)
 #else
 // TODO: Check if UriSchemeHttps is still internal in NETSTANDARD 2.0
@@ -1323,7 +1340,7 @@ namespace HtmlAgilityPack
             return doc;
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Loads an HTML document from an Internet resource.
         /// </summary>
@@ -1340,7 +1357,7 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Loads an HTML document from an Internet resource.
         /// </summary>
@@ -1385,7 +1402,7 @@ namespace HtmlAgilityPack
             return doc;
         }
 #endif
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
 /// <summary>
 /// Loads an HTML document from an Internet resource.
 /// </summary>
@@ -1401,15 +1418,15 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if NET45 || NETSTANDARD
-/// <summary>
-/// Loads an HTML document from an Internet resource.
-/// </summary>
-/// <param name="uri">The requested Uri, such as new Uri("http://Myserver/Mypath/Myfile.asp").</param>
-/// <param name="method">The HTTP method used to open the connection, such as GET, POST, PUT, or PROPFIND.</param>
-/// <param name="proxy">Proxy to use with this request</param>
-/// <param name="credentials">Credentials to use when authenticating</param>
-/// <returns>A new HTML document.</returns>
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
+        /// <summary>
+        /// Loads an HTML document from an Internet resource.
+        /// </summary>
+        /// <param name="uri">The requested Uri, such as new Uri("http://Myserver/Mypath/Myfile.asp").</param>
+        /// <param name="method">The HTTP method used to open the connection, such as GET, POST, PUT, or PROPFIND.</param>
+        /// <param name="proxy">Proxy to use with this request</param>
+        /// <param name="credentials">Credentials to use when authenticating</param>
+        /// <returns>A new HTML document.</returns>
         public HtmlDocument Load(Uri uri, string method, IWebProxy proxy, ICredentials credentials)
         {
             if (UsingCache)
@@ -1418,7 +1435,7 @@ namespace HtmlAgilityPack
             }
 
             HtmlDocument doc;
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
             if (uri.Scheme == Uri.UriSchemeFile)
 #else
             // TODO: Check if UriSchemeHttps is still internal in NETSTANDARD 2.0
@@ -1429,7 +1446,7 @@ namespace HtmlAgilityPack
             }
             else
             {
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
                 if (uri.Scheme == Uri.UriSchemeFile)
 #else
                 // TODO: Check if UriSchemeHttps is still internal in NETSTANDARD 2.0
@@ -1453,7 +1470,7 @@ namespace HtmlAgilityPack
             return doc;
         }
 #endif
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         /// <summary>
         /// Loads an HTML document from an Internet resource and saves it to the specified XmlTextWriter.
         /// </summary>
@@ -1465,12 +1482,12 @@ namespace HtmlAgilityPack
             doc.Save(writer);
         }
 #endif
-#if NET45 || NETSTANDARD
-/// <summary>
-/// Loads an HTML document from an Internet resource and saves it to the specified XmlTextWriter.
-/// </summary>
-/// <param name="htmlUrl">The requested URL, such as "http://Myserver/Mypath/Myfile.asp".</param>
-/// <param name="writer">The XmlTextWriter to which you want to save to.</param>
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
+        /// <summary>
+        /// Loads an HTML document from an Internet resource and saves it to the specified XmlTextWriter.
+        /// </summary>
+        /// <param name="htmlUrl">The requested URL, such as "http://Myserver/Mypath/Myfile.asp".</param>
+        /// <param name="writer">The XmlTextWriter to which you want to save to.</param>
         public void LoadHtmlAsXml(string htmlUrl, XmlWriter writer)
         {
             HtmlDocument doc = Load(htmlUrl);
@@ -1545,7 +1562,7 @@ namespace HtmlAgilityPack
             return len;
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         private HttpStatusCode Get(Uri uri, string method, string path, HtmlDocument doc, IWebProxy proxy,
             ICredentials creds)
         {
@@ -1556,6 +1573,8 @@ namespace HtmlAgilityPack
             req = WebRequest.Create(uri) as HttpWebRequest;
             req.Method = method;
             req.UserAgent = UserAgent;
+            req.AutomaticDecompression = AutomaticDecompression;
+
             if (CaptureRedirect)
             {
                 req.AllowAutoRedirect = false;
@@ -1580,6 +1599,7 @@ namespace HtmlAgilityPack
             _fromCache = false;
             _requestDuration = 0;
             int tc = Environment.TickCount;
+
             if (UsingCache)
             {
                 cachePath = GetCachePath(req.RequestUri);
@@ -1589,23 +1609,26 @@ namespace HtmlAgilityPack
                     oldFile = true;
                 }
             }
-
-            if (_cacheOnly)
+            
+            if (_cacheOnly || _usingCacheIfExists)
             {
-                if (!File.Exists(cachePath))
+                if (File.Exists(cachePath))
+                {
+                    if (path != null)
+                    {
+                        IOLibrary.CopyAlways(cachePath, path);
+                        // touch the file
+                        if (cachePath != null) File.SetLastWriteTime(path, File.GetLastWriteTime(cachePath));
+                    }
+
+                    _fromCache = true;
+                    return HttpStatusCode.NotModified;
+
+                }
+                else if (_cacheOnly)
                 {
                     throw new HtmlWebException("File was not found at cache path: '" + cachePath + "'");
                 }
-
-                if (path != null)
-                {
-                    IOLibrary.CopyAlways(cachePath, path);
-                    // touch the file
-                    if (cachePath != null) File.SetLastWriteTime(path, File.GetLastWriteTime(cachePath));
-                }
-
-                _fromCache = true;
-                return HttpStatusCode.NotModified;
             }
 
             if (_useCookies)
@@ -1622,13 +1645,13 @@ namespace HtmlAgilityPack
                 }
 
                 // dump cookie
-                //				if (_useCookies)
-                //				{
-                //					foreach(Cookie cookie in req.CookieContainer.GetCookies(req.RequestUri))
-                //					{
-                //						HtmlLibrary.Trace("Cookie " + cookie.Name + "=" + cookie.Value + " path=" + cookie.Path + " domain=" + cookie.Domain);
-                //					}
-                //				}
+                //                if (_useCookies)
+                //                {
+                //                    foreach(Cookie cookie in req.CookieContainer.GetCookies(req.RequestUri))
+                //                    {
+                //                        HtmlLibrary.Trace("Cookie " + cookie.Name + "=" + cookie.Value + " path=" + cookie.Path + " domain=" + cookie.Domain);
+                //                    }
+                //                }
             }
 
             HttpWebResponse resp;
@@ -1672,14 +1695,37 @@ namespace HtmlAgilityPack
 
             _requestDuration = Environment.TickCount - tc;
             _responseUri = resp.ResponseUri;
-
+            var statusCode = resp.StatusCode;
             bool html = IsHtmlContent(resp.ContentType);
             bool isUnknown = string.IsNullOrEmpty(resp.ContentType);
 
-            Encoding respenc = !string.IsNullOrEmpty(resp.ContentEncoding)
-                ? Encoding.GetEncoding(resp.ContentEncoding)
-                : null;
-            if (OverrideEncoding != null)
+            // keep old code because logic on  ReadDocumentEncoding(HtmlNode node), now use resp.CharacterSet here.
+            // for futur maybe harmonise.
+            //Encoding respenc = !string.IsNullOrEmpty(resp.ContentEncoding)
+            // ? Encoding.GetEncoding(resp.ContentEncoding)
+            // : null;
+
+            string characterSet = "";
+            if (!string.IsNullOrEmpty(resp.CharacterSet))
+			{
+                // Example : "\"utf-8\"", no utf or other have " so, just remove...
+                characterSet = resp.CharacterSet.Replace("\"","");
+            }
+
+            Encoding respenc = null;
+
+            try
+			{
+                respenc = !string.IsNullOrEmpty(html ? characterSet : resp.ContentEncoding)
+                ? Encoding.GetEncoding(html ? characterSet : resp.ContentEncoding)
+                : null; 
+            }
+            catch (Exception e )
+			{
+
+			} 
+
+			if (OverrideEncoding != null)
                 respenc = OverrideEncoding;
 
             if (CaptureRedirect)
@@ -1782,7 +1828,7 @@ namespace HtmlAgilityPack
                 resp.Close();
             }
 
-            return resp.StatusCode;
+            return statusCode;
         }
 #else
         private HttpStatusCode Get(Uri uri, string method, string path, HtmlDocument doc, IWebProxy proxy,
@@ -1831,21 +1877,24 @@ namespace HtmlAgilityPack
                     }
                 }
 
-                if (_cacheOnly)
+                if (_cacheOnly || _usingCacheIfExists)
                 {
-                    if (!File.Exists(cachePath))
-                    {
-                        throw new HtmlWebException("File was not found at cache path: '" + cachePath + "'");
-                    }
+	                if (File.Exists(cachePath))
+	                {
+		                if (path != null)
+		                {
+			                IOLibrary.CopyAlways(cachePath, path);
+			                // touch the file
+			                if (cachePath != null) File.SetLastWriteTime(path, File.GetLastWriteTime(cachePath));
+		                }
+		                _fromCache = true;
+		                return HttpStatusCode.NotModified;
 
-                    if (path != null)
-                    {
-                        IOLibrary.CopyAlways(cachePath, path);
-                        // touch the file
-                        if (cachePath != null) File.SetLastWriteTime(path, File.GetLastWriteTime(cachePath));
-                    }
-                    _fromCache = true;
-                    return HttpStatusCode.NotModified;
+	                }
+	                else if (_cacheOnly)
+	                {
+		                throw new HtmlWebException("File was not found at cache path: '" + cachePath + "'");
+	                }
                 }
 
                 if (_useCookies)
@@ -1862,13 +1911,13 @@ namespace HtmlAgilityPack
                     }
 
                     // dump cookie
-                    //				if (_useCookies)
-                    //				{
-                    //					foreach(Cookie cookie in req.CookieContainer.GetCookies(req.RequestUri))
-                    //					{
-                    //						HtmlLibrary.Trace("Cookie " + cookie.Name + "=" + cookie.Value + " path=" + cookie.Path + " domain=" + cookie.Domain);
-                    //					}
-                    //				}
+                    //                if (_useCookies)
+                    //                {
+                    //                    foreach(Cookie cookie in req.CookieContainer.GetCookies(req.RequestUri))
+                    //                    {
+                    //                        HtmlLibrary.Trace("Cookie " + cookie.Name + "=" + cookie.Value + " path=" + cookie.Path + " domain=" + cookie.Domain);
+                    //                    }
+                    //                }
                 }
 
                 HttpResponseMessage response;
@@ -1914,7 +1963,10 @@ namespace HtmlAgilityPack
                     ? Encoding.GetEncoding(encoding)
                     : null;
 
-                if(CaptureRedirect)
+                if (OverrideEncoding != null)
+                    respenc = OverrideEncoding;
+
+                if (CaptureRedirect)
                 {
                     // Found == 302
                     if (response.StatusCode == HttpStatusCode.Found)
@@ -2011,14 +2063,14 @@ namespace HtmlAgilityPack
             // note: some headers are collection (ex: www-authenticate)
             // we don't handle that here
             XmlDocument doc = new XmlDocument();
-#if NETSTANDARD
+#if NETSTANDARD1_3 || NETSTANDARD1_6
             doc.Load(File.OpenRead(GetCacheHeadersPath(requestUri)));
 #else
             doc.Load(GetCacheHeadersPath(requestUri));
 #endif
             XmlNode node =
                 doc.SelectSingleNode("//h[translate(@n, 'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ')='" +
-                                     name.ToUpper() + "']");
+                                     name.ToUpperInvariant() + "']");
             if (node == null)
             {
                 return def;
@@ -2034,7 +2086,7 @@ namespace HtmlAgilityPack
             return GetCachePath(uri) + ".h.xml";
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         private bool IsCacheHtmlContent(string path)
         {
             string ct = GetContentTypeForExtension(Path.GetExtension(path), null);
@@ -2044,15 +2096,15 @@ namespace HtmlAgilityPack
 
         private bool IsHtmlContent(string contentType)
         {
-            return contentType.ToLower().StartsWith("text/html");
+            return contentType.ToLowerInvariant().StartsWith("text/html");
         }
 
         private bool IsGZipEncoding(string contentEncoding)
         {
-            return contentEncoding.ToLower().StartsWith("gzip");
+            return contentEncoding.ToLowerInvariant().StartsWith("gzip");
         }
 
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         private HtmlDocument LoadUrl(Uri uri, string method, WebProxy proxy, NetworkCredential creds)
         {
             HtmlDocument doc = new HtmlDocument();
@@ -2069,7 +2121,7 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
         private HtmlDocument LoadUrl(Uri uri, string method, IWebProxy proxy, ICredentials creds)
         {
             HtmlDocument doc = new HtmlDocument();
@@ -2084,7 +2136,7 @@ namespace HtmlAgilityPack
             return doc;
         }
 #endif
-#if !NETSTANDARD
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6)
         private void SaveCacheHeaders(Uri requestUri, HttpWebResponse resp)
         {
             // we cache the original headers aside the cached document.
@@ -2110,7 +2162,7 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if NET45 || NETSTANDARD
+#if NET45 || NETSTANDARD1_3 || NETSTANDARD1_6
         private void SaveCacheHeaders(Uri requestUri, HttpResponseMessage resp)
         {
             // we cache the original headers aside the cached document.
@@ -2135,11 +2187,11 @@ namespace HtmlAgilityPack
         }
 #endif
 
-#if NET45 || NETSTANDARD
-/// <summary>
-/// Begins the process of downloading an internet resource
-/// </summary>
-/// <param name="url">Url to the html document</param>
+#if FX45 || NETSTANDARD
+        /// <summary>
+        /// Begins the process of downloading an internet resource
+        /// </summary>
+        /// <param name="url">Url to the html document</param>
         public Task<HtmlDocument> LoadFromWebAsync(string url)
         {
             return LoadFromWebAsync(new Uri(url), null, null);
@@ -2317,34 +2369,69 @@ namespace HtmlAgilityPack
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         public async Task<HtmlDocument> LoadFromWebAsync(Uri uri, Encoding encoding, NetworkCredential credentials, CancellationToken cancellationToken)
         {
+            HtmlDocument doc = new HtmlDocument();
+             
             var clientHandler = new HttpClientHandler();
             if (credentials == null)
                 clientHandler.UseDefaultCredentials = true;
             else
                 clientHandler.Credentials = credentials;
 
-            var client = new HttpClient(clientHandler);
-
-            var e = await client.GetAsync(uri, cancellationToken).ConfigureAwait(false);
-            if (e.StatusCode == HttpStatusCode.OK)
+			if (CaptureRedirect)
             {
-                var html = string.Empty;
-                if (encoding != null)
+				// https://stackoverflow.com/questions/10453892/how-can-i-get-system-net-http-httpclient-to-not-follow-302-redirects
+				clientHandler.AllowAutoRedirect = false;
+	        }
+
+            HttpClient client;
+
+            if(credentials != null || CaptureRedirect)
+            {
+                client = new HttpClient(clientHandler);
+
+                //https://stackoverflow.com/questions/44076962/how-do-i-set-a-default-user-agent-on-an-httpclient
+                client.DefaultRequestHeaders.Add("User-Agent", this.UserAgent);
+            }
+            else
+            {
+                client = GetSharedHttpClient(this.UserAgent);
+            }
+
+			var e = await client.GetAsync(uri, cancellationToken).ConfigureAwait(false);
+            _statusCode = e.StatusCode;
+
+            if(e.Headers != null && e.Headers.Location != null)
+            {
+                if(e.Headers.Location.IsAbsoluteUri)
                 {
-                    using (var sr = new StreamReader(await e.Content.ReadAsStreamAsync().ConfigureAwait(false), encoding))
-                    {
-                        html = sr.ReadToEnd();
-                    }
+                    _responseUri = new Uri(e.Headers.Location.AbsoluteUri);
                 }
                 else
-                    html = await e.Content.ReadAsStringAsync().ConfigureAwait(false);
-                var doc = new HtmlDocument();
-                if (PreHandleDocument != null)
-                    PreHandleDocument(doc);
-                doc.LoadHtml(html);
-                return doc;
+                {
+#if !(NETSTANDARD1_3 || NETSTANDARD1_6 || WINDOWS_UWP) 
+                    _responseUri = new Uri(uri.GetLeftPart(UriPartial.Authority) + e.Headers.Location);
+#endif
+                }
+            }         
+
+            var html = string.Empty;
+            if (encoding != null)
+            {
+                using (var sr = new StreamReader(await e.Content.ReadAsStreamAsync().ConfigureAwait(false), encoding))
+                {
+                    html = sr.ReadToEnd();
+                }
             }
-            throw new Exception("Error downloading html");
+            else
+                html = await e.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            if (PreHandleDocument != null)
+                PreHandleDocument(doc);
+
+            if (html != null)
+                doc.LoadHtml(html);
+            
+            return doc;
         }
 #endif
 
@@ -2382,7 +2469,17 @@ namespace HtmlAgilityPack
 
         internal string WebBrowserOuterHtml(object webBrowser)
         {
-            var documentProperty = webBrowser.GetType().GetProperty("Document");
+	        try
+	        { 
+		        var responseUriProperty = webBrowser.GetType().GetProperty("Url");
+		        _responseUri = (Uri)responseUriProperty.GetValue(webBrowser, null);
+			}
+	        catch  
+	        { 
+				// silence catch
+	        }
+
+			var documentProperty = webBrowser.GetType().GetProperty("Document");
             var document = documentProperty.GetValue(webBrowser, null);
 
             var getElementsByTagNameMethod = document.GetType().GetMethod("GetElementsByTagName", new Type[] {typeof(string)});
@@ -2393,8 +2490,8 @@ namespace HtmlAgilityPack
 
             var outerHtmlProperty = firstElement.GetType().GetProperty("OuterHtml");
             var outerHtml = outerHtmlProperty.GetValue(firstElement, null);
-
-            return (string) outerHtml;
+			
+			return (string) outerHtml;
         }
 
         /// <summary>Loads HTML using a WebBrowser and Application.DoEvents.</summary>
@@ -2465,6 +2562,17 @@ namespace HtmlAgilityPack
                 var scripErrorSuppressedProperty = webBrowserType.GetProperty("ScriptErrorsSuppressed");
                 scripErrorSuppressedProperty.SetValue(webBrowser, true, null);
 
+                // disable popup
+                {
+                    var newWindowEvent = webBrowser.GetType().GetEvent("NewWindow");
+                    if(newWindowEvent != null)
+                    {
+                        var newWindowHandler = this.GetType().GetMethod("Web_NewWindow", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        Delegate newWindowDelegate = Delegate.CreateDelegate(newWindowEvent.EventHandlerType, null, newWindowHandler);
+                        newWindowEvent.AddEventHandler(webBrowser, newWindowDelegate);
+                    }
+                }
+
                 var navigateMethod = webBrowserType.GetMethod("Navigate", new Type[] {typeof(Uri)});
                 navigateMethod.Invoke(webBrowser, new object[] {uri});
 
@@ -2505,75 +2613,27 @@ namespace HtmlAgilityPack
                 }
 
                 var documentText = WebBrowserOuterHtml(webBrowser);
-
-                doc.LoadHtml(documentText);
+				 
+				doc.LoadHtml(documentText);
             }
 
             return doc;
         }
+
+        private void Web_NewWindow(object sender, object e)
+        {
+            // we don't want a dynamic reference so we do it via reflection
+            var cancelProperty = e.GetType().GetProperty("Cancel");
+            if(cancelProperty != null)
+            {
+                cancelProperty.SetValue(e, true, null);
+            }
+        }
+
 #endif
 
         #endregion
     }
 
-#if !NETSTANDARD
-    /// <summary>
-    /// Wraps getting AppDomain permissions
-    /// </summary>
-    public class PermissionHelper : IPermissionHelper
-    {
-        /// <summary>
-        /// Checks to see if Registry access is available to the caller
-        /// </summary>
-        /// <returns></returns>
-        public bool GetIsRegistryAvailable()
-        {
-#if FX40
-            var permissionSet = new PermissionSet(PermissionState.None);
-            var writePermission = new RegistryPermission(PermissionState.Unrestricted);
-            permissionSet.AddPermission(writePermission);
-
-            return permissionSet.IsSubsetOf(AppDomain.CurrentDomain.PermissionSet);
-#else
-            return SecurityManager.IsGranted(new RegistryPermission(PermissionState.Unrestricted));
-#endif
-        }
-
-        /// <summary>
-        /// Checks to see if DNS information is available to the caller
-        /// </summary>
-        /// <returns></returns>
-        public bool GetIsDnsAvailable()
-        {
-#if FX40
-            var permissionSet = new PermissionSet(PermissionState.None);
-            var writePermission = new DnsPermission(PermissionState.Unrestricted);
-            permissionSet.AddPermission(writePermission);
-
-            return permissionSet.IsSubsetOf(AppDomain.CurrentDomain.PermissionSet);
-#else
-            return SecurityManager.IsGranted(new DnsPermission(PermissionState.Unrestricted));
-#endif
-        }
-    }
-#endif
-
-    /// <summary>
-    /// An interface for getting permissions of the running application
-    /// </summary>
-    public interface IPermissionHelper
-    {
-        /// <summary>
-        /// Checks to see if Registry access is available to the caller
-        /// </summary>
-        /// <returns></returns>
-        bool GetIsRegistryAvailable();
-
-        /// <summary>
-        /// Checks to see if DNS information is available to the caller
-        /// </summary>
-        /// <returns></returns>
-        bool GetIsDnsAvailable();
-    }
 }
 #endif

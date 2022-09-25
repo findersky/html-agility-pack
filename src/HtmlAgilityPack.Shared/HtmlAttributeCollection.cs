@@ -8,6 +8,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace HtmlAgilityPack
 {
@@ -20,7 +21,7 @@ namespace HtmlAgilityPack
 
         internal Dictionary<string, HtmlAttribute> Hashitems = new Dictionary<string, HtmlAttribute>(StringComparer.OrdinalIgnoreCase);
         private HtmlNode _ownernode;
-        private List<HtmlAttribute> items = new List<HtmlAttribute>();
+        internal List<HtmlAttribute> items = new List<HtmlAttribute>();
 
         #endregion
 
@@ -33,26 +34,6 @@ namespace HtmlAgilityPack
 
         #endregion
 
-        #region Properties
-
-        /// <summary>
-        /// Gets a given attribute from the list using its name.
-        /// </summary>
-        public HtmlAttribute this[string name]
-        {
-            get
-            {
-                if (name == null)
-                {
-                    throw new ArgumentNullException("name");
-                }
-                HtmlAttribute value;
-                return Hashitems.TryGetValue(name, out value) ? value : null;
-            }
-            set { Append(value); }
-        }
-
-        #endregion
 
         #region IList<HtmlAttribute> Members
 
@@ -78,8 +59,65 @@ namespace HtmlAgilityPack
         public HtmlAttribute this[int index]
         {
             get { return items[index]; }
-            set { items[index] = value; }
+            set
+            {
+                var oldValue = items[index];
+               
+                items[index] = value;
+
+                if (oldValue.Name != value.Name)
+                {
+                    Hashitems.Remove(oldValue.Name);
+                }
+                Hashitems[value.Name] = value;
+
+                value._ownernode = _ownernode;
+                _ownernode.SetChanged();
+            }
         }
+
+
+        /// <summary>
+        /// Gets a given attribute from the list using its name.
+        /// </summary>
+        public HtmlAttribute this[string name]
+        {
+            get
+            {
+                if (name == null)
+                {
+                    throw new ArgumentNullException("name");
+                }
+
+                HtmlAttribute value;
+                return Hashitems.TryGetValue(name, out value) ? value : null;
+            }
+            set
+            {
+                HtmlAttribute currentValue;
+
+                if (!Hashitems.TryGetValue(name, out currentValue))
+                {
+                    Append(value);
+                }
+                else
+                {
+	                this[items.IndexOf(currentValue)] = value;
+                }
+            }
+        }
+
+
+        /// <summary>
+        /// Adds a new attribute to the collection with the given values
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="value"></param>
+        public void Add(string name, string value)
+        {
+            Append(name, value);
+        }
+
 
         /// <summary>
         /// Adds supplied item to collection
@@ -90,12 +128,32 @@ namespace HtmlAgilityPack
             Append(item);
         }
 
-        /// <summary>
-        /// Explicit clear
-        /// </summary>
-        void ICollection<HtmlAttribute>.Clear()
+        /// <summary>Adds a range supplied items to collection.</summary>
+        /// <param name="items">An IEnumerable&lt;HtmlAttribute&gt; of items to append to this.</param>
+        public void AddRange(IEnumerable<HtmlAttribute> items)
+	    {
+		    foreach (var item in items)
+		    { 
+				Append(item);
+			}
+	    }
+
+        /// <summary>Adds a range supplied items to collection using a dictionary.</summary>
+        /// <param name="items">A Dictionary&lt;string,string&gt; of items to append to this.</param>
+        public void AddRange(Dictionary<string, string> items)
+	    {
+		    foreach (var item in items)
+            {
+                Add(item.Key, item.Value);
+            }
+	    }
+
+		/// <summary>
+		/// Explicit clear
+		/// </summary>
+		void ICollection<HtmlAttribute>.Clear()
         {
-            items.Clear();
+            Clear();
         }
 
         /// <summary>
@@ -172,7 +230,19 @@ namespace HtmlAgilityPack
         /// <returns></returns>
         bool ICollection<HtmlAttribute>.Remove(HtmlAttribute item)
         {
-            return items.Remove(item);
+            if (item == null)
+            {
+                return false;
+            }
+
+            int index = GetAttributeIndex(item);
+            if (index == -1)
+            {
+                return false;
+            }
+
+            RemoveAt(index);
+            return true;
         }
 
         /// <summary>
@@ -193,23 +263,18 @@ namespace HtmlAgilityPack
         #region Public Methods
 
         /// <summary>
-        /// Adds a new attribute to the collection with the given values
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="value"></param>
-        public void Add(string name, string value)
-        {
-            Append(name, value);
-        }
-
-        /// <summary>
         /// Inserts the specified attribute as the last attribute in the collection.
         /// </summary>
         /// <param name="newAttribute">The attribute to insert. May not be null.</param>
         /// <returns>The appended attribute.</returns>
         public HtmlAttribute Append(HtmlAttribute newAttribute)
         {
-            if (newAttribute == null)
+	        if (_ownernode.NodeType == HtmlNodeType.Text || _ownernode.NodeType == HtmlNodeType.Comment)
+	        {
+				throw new Exception("A Text or Comment node cannot have attributes.");
+	        }
+				  
+			if (newAttribute == null)
             {
                 throw new ArgumentNullException("newAttribute");
             }
@@ -257,6 +322,7 @@ namespace HtmlAgilityPack
                 if (String.Equals(items[i].Name, name, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
+
             return false;
         }
 
@@ -281,11 +347,13 @@ namespace HtmlAgilityPack
             {
                 throw new ArgumentNullException("attribute");
             }
+
             int index = GetAttributeIndex(attribute);
             if (index == -1)
             {
                 throw new IndexOutOfRangeException();
             }
+
             RemoveAt(index);
         }
 
@@ -299,14 +367,20 @@ namespace HtmlAgilityPack
             {
                 throw new ArgumentNullException("name");
             }
-
+            
+            List<int> listToRemove = new List<int>();
             for (int i = 0; i < items.Count; i++)
             {
                 HtmlAttribute att = items[i];
                 if (String.Equals(att.Name, name, StringComparison.OrdinalIgnoreCase))
                 {
-                    RemoveAt(i);
+                    listToRemove.Add(i);
                 }
+            }
+
+            foreach(var i in listToRemove.OrderByDescending(x => x))
+			{ 
+                RemoveAt(i);
             }
         }
 
@@ -366,11 +440,13 @@ namespace HtmlAgilityPack
             {
                 throw new ArgumentNullException("attribute");
             }
+
             for (int i = 0; i < items.Count; i++)
             {
                 if ((items[i]) == attribute)
                     return i;
             }
+
             return -1;
         }
 
@@ -386,6 +462,7 @@ namespace HtmlAgilityPack
                 if (String.Equals((items[i]).Name, name, StringComparison.OrdinalIgnoreCase))
                     return i;
             }
+
             return -1;
         }
 

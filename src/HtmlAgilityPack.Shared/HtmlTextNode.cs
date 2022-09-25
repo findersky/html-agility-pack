@@ -69,7 +69,11 @@ namespace HtmlAgilityPack
 
                 return _text;
             }
-            set { _text = value; }
+            set
+            {
+                _text = value;
+                SetChanged();
+            }
         }
 
         #endregion

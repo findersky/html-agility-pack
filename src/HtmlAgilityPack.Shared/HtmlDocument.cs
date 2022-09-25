@@ -21,11 +21,38 @@ namespace HtmlAgilityPack
     {
         #region Manager
 
-        /// <summary>True to disable, false to enable the behavaior tag p.</summary>
-        public static bool DisableBehavaiorTagP;
+        internal static bool _disableBehaviorTagP = true;
+
+        /// <summary>True to disable, false to enable the behavior tag p.</summary>
+        public static bool DisableBehaviorTagP
+        {
+            get => _disableBehaviorTagP;
+            set
+            {
+                if (value)
+                {
+                    if (HtmlNode.ElementsFlags.ContainsKey("p"))
+                    {
+                        HtmlNode.ElementsFlags.Remove("p");
+                    }
+                }
+                else
+                {
+                    if (!HtmlNode.ElementsFlags.ContainsKey("p"))
+                    {
+                        HtmlNode.ElementsFlags.Add("p", HtmlElementFlag.Empty | HtmlElementFlag.Closed);
+                    }
+                }
+
+                _disableBehaviorTagP = value;
+            }
+        }
 
         /// <summary>Default builder to use in the HtmlDocument constructor</summary>
         public static Action<HtmlDocument> DefaultBuilder { get; set; }
+
+        /// <summary>Action to execute before the Parse is executed</summary>
+        public Action<HtmlDocument> ParseExecuting { get; set; }
 
         #endregion
 
@@ -43,7 +70,7 @@ namespace HtmlAgilityPack
         private Encoding _declaredencoding;
         private HtmlNode _documentnode;
         private bool _fullcomment;
-        private int _index;
+		private int _index;
         internal Dictionary<string, HtmlNode> Lastnodes = new Dictionary<string, HtmlNode>();
         private HtmlNode _lastparentnode;
         private int _line;
@@ -57,8 +84,10 @@ namespace HtmlAgilityPack
         private int _remainderOffset;
         private ParseState _state;
         private Encoding _streamencoding;
-        internal string Text;
+        private bool _useHtmlEncodingForStream;
 
+        /// <summary>The HtmlDocument Text. Careful if you modify it.</summary>
+        public string Text;
 
         /// <summary>True to stay backward compatible with previous version of HAP. This option does not guarantee 100% compatibility.</summary>
         public bool BackwardCompatibility = true;
@@ -100,6 +129,11 @@ namespace HtmlAgilityPack
         public Encoding OptionDefaultStreamEncoding;
 
         /// <summary>
+        /// Force to take the original comment instead of creating it
+        /// </summary>
+        public bool OptionXmlForceOriginalComment;
+
+        /// <summary>
         /// Defines if source text must be extracted while parsing errors.
         /// If the document has a lot of errors, or cascading errors, parsing performance can be dramatically affected if set to true.
         /// Default is false.
@@ -119,17 +153,25 @@ namespace HtmlAgilityPack
         public bool OptionFixNestedTags; // fix li, tr, th, td tags
 
         /// <summary>
-        /// Defines if output must conform to XML, instead of HTML.
+        /// Defines if output must conform to XML, instead of HTML. Default is false.
         /// </summary>
         public bool OptionOutputAsXml;
+
+        /// <summary>
+        /// If used together with <see cref="OptionOutputAsXml"/> and enabled, Xml namespaces in element names are preserved. Default is false.
+        /// </summary>
+        public bool OptionPreserveXmlNamespaces;
 
         /// <summary>
         /// Defines if attribute value output must be optimized (not bound with double quotes if it is possible). Default is false.
         /// </summary>
         public bool OptionOutputOptimizeAttributeValues;
 
+        /// <summary>Defines the global attribute value quote. When specified, it will always win.</summary>
+        public AttributeValueQuote? GlobalAttributeValueQuote;
+
         /// <summary>
-        /// Defines if name must be output with it's original case. Useful for asp.net tags and attributes
+        /// Defines if name must be output with it's original case. Useful for asp.net tags and attributes. Default is false.
         /// </summary>
         public bool OptionOutputOriginalCase;
 
@@ -151,6 +193,11 @@ namespace HtmlAgilityPack
         public string OptionStopperNodeName;
 
         /// <summary>
+        /// Defines if attributes should use original names by default, rather than lower case. Default is false.
+        /// </summary>
+        public bool OptionDefaultUseOriginalName;
+
+        /// <summary>
         /// Defines if the 'id' attribute must be specifically used. Default is true.
         /// </summary>
         public bool OptionUseIdAttribute = true;
@@ -160,11 +207,18 @@ namespace HtmlAgilityPack
         /// </summary>
         public bool OptionWriteEmptyNodes;
 
-        #endregion
+	    /// <summary>
+	    /// The max number of nested child nodes. 
+	    /// Added to prevent stackoverflow problem when a page has tens of thousands of opening html tags with no closing tags 
+	    /// </summary>
+	    public int OptionMaxNestedChildNodes = 0;
 
-        #region Static Members
 
-        internal static readonly string HtmlExceptionRefNotChild = "Reference node must be a child of this node";
+		#endregion
+
+		#region Static Members
+
+		internal static readonly string HtmlExceptionRefNotChild = "Reference node must be a child of this node";
 
         internal static readonly string HtmlExceptionUseIdAttributeFalse = "You need to set UseIdAttribute property to true to enable this feature";
 
@@ -195,7 +249,7 @@ namespace HtmlAgilityPack
             }
 
             _documentnode = CreateNode(HtmlNodeType.Document, 0);
-#if SILVERLIGHT || METRO || NETSTANDARD
+#if SILVERLIGHT || METRO || NETSTANDARD1_3 || NETSTANDARD1_6
             OptionDefaultStreamEncoding = Encoding.UTF8;
 #else
             OptionDefaultStreamEncoding = Encoding.Default;
@@ -233,7 +287,7 @@ namespace HtmlAgilityPack
 
         /// <summary>
         /// Gets the document's declared encoding.
-        /// Declared encoding is determined using the meta http-equiv="content-type" content="text/html;charset=XXXXX" html node.
+        /// Declared encoding is determined using the meta http-equiv="content-type" content="text/html;charset=XXXXX" html node (pre-HTML5) or the meta charset="XXXXX" html node (HTML5).
         /// </summary>
         public Encoding DeclaredEncoding
         {
@@ -301,10 +355,23 @@ namespace HtmlAgilityPack
         /// <returns>A string that is a valid XML name.</returns>
         public static string GetXmlName(string name)
         {
-            return GetXmlName(name, false);
+            return GetXmlName(name, false, false);
         }
 
-        public static string GetXmlName(string name, bool isAttribute)
+#if !METRO
+		public void UseAttributeOriginalName(string tagName)
+	    {
+		    foreach (var nod in this.DocumentNode.SelectNodes("//" + tagName))
+		    {
+			    foreach (var attribut in nod.Attributes)
+			    {
+				    attribut.UseOriginalName = true;
+			    }
+		    }
+		}
+#endif
+
+		public static string GetXmlName(string name, bool isAttribute, bool preserveXmlNamespaces)
         {
             string xmlname = string.Empty;
             bool nameisok = true;
@@ -315,8 +382,8 @@ namespace HtmlAgilityPack
                 if (((name[i] >= 'a') && (name[i] <= 'z')) ||
                     ((name[i] >= 'A') && (name[i] <= 'Z')) ||
                     ((name[i] >= '0') && (name[i] <= '9')) ||
-                    (isAttribute && name[i] == ':') ||
-                    //					(name[i]==':') || (name[i]=='_') || (name[i]=='-') || (name[i]=='.')) // these are bads in fact
+                    ((isAttribute || preserveXmlNamespaces) && name[i] == ':') ||
+                    //                    (name[i]==':') || (name[i]=='_') || (name[i]=='-') || (name[i]=='.')) // these are bads in fact
                     (name[i] == '_') || (name[i] == '-') || (name[i] == '.'))
                 {
                     xmlname += name[i];
@@ -489,6 +556,19 @@ namespace HtmlAgilityPack
         /// <returns>The detected encoding.</returns>
         public Encoding DetectEncoding(Stream stream)
         {
+            return DetectEncoding(stream, false);
+        }
+
+        /// <summary>
+        /// Detects the encoding of an HTML stream.
+        /// </summary>
+        /// <param name="stream">The input stream. May not be null.</param>
+        /// <param name="checkHtml">The html is checked.</param>
+        /// <returns>The detected encoding.</returns>
+        public Encoding DetectEncoding(Stream stream, bool checkHtml)
+        {
+            _useHtmlEncodingForStream = checkHtml;
+
             if (stream == null)
             {
                 throw new ArgumentNullException("stream");
@@ -530,7 +610,7 @@ namespace HtmlAgilityPack
             }
 
             StreamReader sr = reader as StreamReader;
-            if (sr != null)
+            if (sr != null && !_useHtmlEncodingForStream)
             {
                 Text = sr.ReadToEnd();
                 _streamencoding = sr.CurrentEncoding;
@@ -556,7 +636,7 @@ namespace HtmlAgilityPack
             return _streamencoding;
         }
 
-
+     
         /// <summary>
         /// Detects the encoding of an HTML text.
         /// </summary>
@@ -924,16 +1004,22 @@ namespace HtmlAgilityPack
                     {
                         HtmlNode foundNode = null;
                         Stack<HtmlNode> futureChild = new Stack<HtmlNode>();
-                        for (HtmlNode node = _lastparentnode.LastChild; node != null; node = node.PreviousSibling)
-                        {
-                            if ((node.Name == _currentnode.Name) && (!node.HasChildNodes))
-                            {
-                                foundNode = node;
-                                break;
-                            }
 
-                            futureChild.Push(node);
+                        if (!_currentnode.Name.Equals("br"))
+						{
+                            for (HtmlNode node = _lastparentnode.LastChild; node != null; node = node.PreviousSibling)
+                            {
+                                // br node never can contains other nodes.
+                                if ((node.Name == _currentnode.Name) && (!node.HasChildNodes))
+                                {
+                                    foundNode = node;
+                                    break;
+                                }
+
+                                futureChild.Push(node);
+                            }
                         }
+                        
 
                         if (foundNode != null)
                         {
@@ -960,7 +1046,7 @@ namespace HtmlAgilityPack
                         // this is a hack: add it as a text node
                         HtmlNode closenode = CreateNode(HtmlNodeType.Text, _currentnode._outerstartindex);
                         closenode._outerlength = _currentnode._outerlength;
-                        ((HtmlTextNode) closenode).Text = ((HtmlTextNode) closenode).Text.ToLower();
+                        ((HtmlTextNode) closenode).Text = ((HtmlTextNode) closenode).Text.ToLowerInvariant();
                         if (_lastparentnode != null)
                         {
                             _lastparentnode.AppendChild(closenode);
@@ -1033,7 +1119,7 @@ namespace HtmlAgilityPack
         private void DecrementPosition()
         {
             _index--;
-            if (_lineposition == 1)
+            if (_lineposition == 0)
             {
                 _lineposition = _maxlineposition;
                 _line--;
@@ -1130,7 +1216,7 @@ namespace HtmlAgilityPack
             _maxlineposition = _lineposition;
             if (_c == 10)
             {
-                _lineposition = 1;
+                _lineposition = 0;
                 _line++;
             }
             else
@@ -1141,7 +1227,7 @@ namespace HtmlAgilityPack
 
         private bool IsValidTag()
         {
-            bool isValidTag = _c == '<' && _index < Text.Length && (Char.IsLetter(Text[_index]) || Text[_index] == '/' || Text[_index] == '!' || Text[_index] == '%');
+            bool isValidTag = _c == '<' && _index < Text.Length && (Char.IsLetter(Text[_index]) || Text[_index] == '/' || Text[_index] == '?' || Text[_index] == '!' || Text[_index] == '%');
             return isValidTag;
         }
 
@@ -1168,7 +1254,7 @@ namespace HtmlAgilityPack
                             break;
 
                         case ParseState.BetweenAttributes:
-                            PushAttributeNameStart(_index - 1);
+                            PushAttributeNameStart(_index - 1, _lineposition -1);
                             break;
 
                         case ParseState.WhichTag:
@@ -1193,9 +1279,9 @@ namespace HtmlAgilityPack
             _state = ParseState.WhichTag;
             if ((_index - 1) <= (Text.Length - 2))
             {
-                if (Text[_index] == '!')
+	            if (Text[_index] == '!' || Text[_index] == '?')
                 {
-                    PushNodeStart(HtmlNodeType.Comment, _index - 1);
+					PushNodeStart(HtmlNodeType.Comment, _index - 1, _lineposition -1);
                     PushNodeNameStart(true, _index);
                     PushNodeNameEnd(_index + 1);
                     _state = ParseState.Comment;
@@ -1209,19 +1295,24 @@ namespace HtmlAgilityPack
                         else
                         {
                             _fullcomment = false;
-                        }
+						}
                     }
 
                     return true;
                 }
             }
 
-            PushNodeStart(HtmlNodeType.Element, _index - 1);
+            PushNodeStart(HtmlNodeType.Element, _index - 1,  _lineposition - 1);
             return true;
         }
 
         private void Parse()
         {
+            if (ParseExecuting != null)
+            {
+                ParseExecuting(this);
+            }
+
             int lastquote = 0;
             if (OptionComputeChecksum)
             {
@@ -1233,8 +1324,8 @@ namespace HtmlAgilityPack
             _fullcomment = false;
             _parseerrors = new List<HtmlParseError>();
             _line = 1;
-            _lineposition = 1;
-            _maxlineposition = 1;
+            _lineposition = 0;
+            _maxlineposition = 0;
 
             _state = ParseState.Text;
             _oldstate = _state;
@@ -1247,7 +1338,7 @@ namespace HtmlAgilityPack
             _currentattribute = null;
 
             _index = 0;
-            PushNodeStart(HtmlNodeType.Text, 0);
+            PushNodeStart(HtmlNodeType.Text, 0, _lineposition);
             while (_index < Text.Length)
             {
                 _c = Text[_index];
@@ -1281,17 +1372,7 @@ namespace HtmlAgilityPack
                             continue;
                         if (IsWhiteSpace(_c))
                         {
-                            // CHECK if parent must be implicitely closed
-                            if (IsParentImplicitEnd())
-                            {
-                                CloseParentImplicitEnd();
-                            }
-
-                            // CHECK if parent must be explicitely closed
-                            if (IsParentExplicitEnd())
-                            {
-                                CloseParentExplicitEnd();
-                            }
+                            CloseParentImplicitExplicitNode();
 
                             PushNodeNameEnd(_index - 1);
                             if (_state != ParseState.Tag)
@@ -1302,17 +1383,7 @@ namespace HtmlAgilityPack
 
                         if (_c == '/')
                         {
-                            // CHECK if parent must be implicitely closed
-                            if (IsParentImplicitEnd())
-                            {
-                                CloseParentImplicitEnd();
-                            }
-
-                            // CHECK if parent must be explicitely closed
-                            if (IsParentExplicitEnd())
-                            {
-                                CloseParentExplicitEnd();
-                            }
+                            CloseParentImplicitExplicitNode();
 
                             PushNodeNameEnd(_index - 1);
                             if (_state != ParseState.Tag)
@@ -1323,17 +1394,7 @@ namespace HtmlAgilityPack
 
                         if (_c == '>')
                         {
-                            // CHECK if parent must be implicitely closed
-                            if (IsParentImplicitEnd())
-                            {
-                                CloseParentImplicitEnd();
-                            }
-
-                            // CHECK if parent must be explicitely closed
-                            if (IsParentExplicitEnd())
-                            {
-                                CloseParentExplicitEnd();
-                            }
+                            CloseParentImplicitExplicitNode();
 
                             //// CHECK if parent is compatible with end tag
                             //if (IsParentIncompatibleEndTag())
@@ -1356,7 +1417,7 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.Tag)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                         }
 
                         break;
@@ -1386,11 +1447,11 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.BetweenAttributes)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
-                        PushAttributeNameStart(_index - 1);
+                        PushAttributeNameStart(_index - 1, _lineposition -1);
                         _state = ParseState.AttributeName;
                         break;
 
@@ -1410,7 +1471,7 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.EmptyTag)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
@@ -1434,6 +1495,8 @@ namespace HtmlAgilityPack
                         if (NewCheck())
                             continue;
 
+                        _currentattribute._isFromParse = true;
+
                         if (IsWhiteSpace(_c))
                         {
                             PushAttributeNameEnd(_index - 1);
@@ -1444,6 +1507,7 @@ namespace HtmlAgilityPack
                         if (_c == '=')
                         {
                             PushAttributeNameEnd(_index - 1);
+                            _currentattribute._hasEqual = true;
                             _state = ParseState.AttributeAfterEquals;
                             continue;
                         }
@@ -1461,7 +1525,7 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.AttributeName)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
@@ -1485,12 +1549,13 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.AttributeBeforeEquals)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
                         if (_c == '=')
                         {
+                            _currentattribute._hasEqual = true;
                             _state = ParseState.AttributeAfterEquals;
                             continue;
                         }
@@ -1527,7 +1592,7 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.AttributeAfterEquals)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
@@ -1559,7 +1624,7 @@ namespace HtmlAgilityPack
                             if (_state != ParseState.AttributeValue)
                                 continue;
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
@@ -1593,8 +1658,10 @@ namespace HtmlAgilityPack
                         {
                             if (_fullcomment)
                             {
-                                if ((Text[_index - 2] != '-') ||
-                                    (Text[_index - 3] != '-'))
+	                            if (((Text[_index - 2] != '-') || (Text[_index - 3] != '-')) 
+                                    &&  
+                                    ((Text[_index - 2] != '!') || (Text[_index - 3] != '-') ||
+                                     (Text[_index - 4] != '-')))
                                 {
                                     continue;
                                 }
@@ -1608,7 +1675,7 @@ namespace HtmlAgilityPack
                             }
 
                             _state = ParseState.Text;
-                            PushNodeStart(HtmlNodeType.Text, _index);
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
                             continue;
                         }
 
@@ -1662,15 +1729,26 @@ namespace HtmlAgilityPack
                                 int c = Text[_index - 1 + 2 + _currentnode.Name.Length];
                                 if ((c == '>') || (IsWhiteSpace(c)))
                                 {
-                                    // add the script as a text node
-                                    HtmlNode script = CreateNode(HtmlNodeType.Text,
+									// add the script as a text node
+									HtmlNode script = CreateNode(HtmlNodeType.Text,
                                         _currentnode._outerstartindex +
                                         _currentnode._outerlength);
                                     script._outerlength = _index - 1 - script._outerstartindex;
+                                    script._streamposition = script._outerstartindex;
+                                    script._line = _currentnode.Line;
+                                    script._lineposition = _currentnode.LinePosition + _currentnode._namelength + 2;
+
                                     _currentnode.AppendChild(script);
 
+									// https://www.w3schools.com/jsref/prop_node_innertext.asp
+									// textContent returns the text content of all elements, while innerText returns the content of all elements, except for <script> and <style> elements.
+									// innerText will not return the text of elements that are hidden with CSS (textContent will). ==> The parser do not support that.
+									if (_currentnode.Name.ToLowerInvariant().Equals("script")  || _currentnode.Name.ToLowerInvariant().Equals("style"))
+                                    {
+	                                    _currentnode._isHideInnerText = true;
+									}
 
-                                    PushNodeStart(HtmlNodeType.Element, _index - 1);
+									PushNodeStart(HtmlNodeType.Element, _index - 1, _lineposition -1);
                                     PushNodeNameStart(false, _index - 1 + 2);
                                     _state = ParseState.Tag;
                                     IncrementPosition();
@@ -1697,18 +1775,26 @@ namespace HtmlAgilityPack
             Lastnodes.Clear();
         }
 
-        private void PushAttributeNameEnd(int index)
-        {
-            _currentattribute._namelength = index - _currentattribute._namestartindex;
-            _currentnode.Attributes.Append(_currentattribute);
-        }
+        // In this moment, we don't have value. 
+        // Potential: "\"", "'", "[", "]", "<", ">", "-", "|", "/", "\\"
+        private static List<string> BlockAttributes = new List<string>() { "\"", "'" };
 
-        private void PushAttributeNameStart(int index)
+	    private void PushAttributeNameEnd(int index)
+	    {
+		    _currentattribute._namelength = index - _currentattribute._namestartindex;
+
+		    if (_currentattribute.Name != null && !BlockAttributes.Contains(_currentattribute.Name))
+		    {
+			    _currentnode.Attributes.Append(_currentattribute);
+		    }
+	    }
+
+		private void PushAttributeNameStart(int index, int lineposition)
         {
             _currentattribute = CreateAttribute();
             _currentattribute._namestartindex = index;
             _currentattribute.Line = _line;
-            _currentattribute._lineposition = _lineposition;
+            _currentattribute._lineposition = lineposition;
             _currentattribute._streamposition = index;
         }
 
@@ -1722,6 +1808,38 @@ namespace HtmlAgilityPack
             PushAttributeValueStart(index, 0);
         }
 
+        private void CloseParentImplicitExplicitNode()
+        {
+            bool hasNodeToClose = true;
+
+            while(hasNodeToClose && !_lastparentnode.Closed)
+            {
+                hasNodeToClose = false;
+
+                bool forceExplicitEnd = false;
+
+                // CHECK if parent must be implicitely closed
+                if (IsParentImplicitEnd())
+                {
+                    if (OptionOutputAsXml)
+                    {
+                        forceExplicitEnd = true;
+                    }
+                    else
+                    {
+                        CloseParentImplicitEnd();
+                        hasNodeToClose = true;
+                    }
+                }
+
+                // CHECK if parent must be explicitely closed
+                if (forceExplicitEnd || IsParentExplicitEnd())
+                {
+                    CloseParentExplicitEnd();
+                    hasNodeToClose = true;
+                }
+            }           
+        }
         private bool IsParentImplicitEnd()
         {
             // MUST be a start tag
@@ -1730,7 +1848,7 @@ namespace HtmlAgilityPack
             bool isImplicitEnd = false;
 
             var parent = _lastparentnode.Name;
-            var nodeName = Text.Substring(_currentnode._namestartindex, _index - _currentnode._namestartindex - 1);
+            var nodeName = Text.Substring(_currentnode._namestartindex, _index - _currentnode._namestartindex - 1).ToLowerInvariant();
 
             switch (parent)
             {
@@ -1743,8 +1861,44 @@ namespace HtmlAgilityPack
                 case "dt":
                     isImplicitEnd = nodeName == "dt" || nodeName == "dd";
                     break;
+                case "li":
+                    isImplicitEnd = nodeName == "li";
+                    break;
                 case "p":
-                    isImplicitEnd = nodeName == "p";
+                    if (DisableBehaviorTagP)
+                    {
+                        isImplicitEnd = nodeName == "address"
+                                        || nodeName == "article"
+                                        || nodeName == "aside"
+                                        || nodeName == "blockquote"
+                                        || nodeName == "dir"
+                                        || nodeName == "div"
+                                        || nodeName == "dl"
+                                        || nodeName == "fieldset"
+                                        || nodeName == "footer"
+                                        || nodeName == "form"
+                                        || nodeName == "h1"
+                                        || nodeName == "h2"
+                                        || nodeName == "h3"
+                                        || nodeName == "h4"
+                                        || nodeName == "h5"
+                                        || nodeName == "h6"
+                                        || nodeName == "header"
+                                        || nodeName == "hr"
+                                        || nodeName == "menu"
+                                        || nodeName == "nav"
+                                        || nodeName == "ol"
+                                        || nodeName == "p"
+                                        || nodeName == "pre"
+                                        || nodeName == "section"
+                                        || nodeName == "table"
+                                        || nodeName == "ul";
+                    }
+                    else
+                    {
+                        isImplicitEnd = nodeName == "p";
+                    }
+                    
                     break;
                 case "option":
                     isImplicitEnd = nodeName == "option";
@@ -1762,12 +1916,27 @@ namespace HtmlAgilityPack
             bool isExplicitEnd = false;
 
             var parent = _lastparentnode.Name;
-            var nodeName = Text.Substring(_currentnode._namestartindex, _index - _currentnode._namestartindex - 1);
+            var nodeName = Text.Substring(_currentnode._namestartindex, _index - _currentnode._namestartindex - 1).ToLowerInvariant();
 
             switch (parent)
             {
                 case "title":
                     isExplicitEnd = nodeName == "title";
+                    break;
+                case "p":
+                    isExplicitEnd = nodeName == "div";
+					break;
+                case "table":
+                    isExplicitEnd = nodeName == "table";
+                    break;
+                case "tr":
+                    isExplicitEnd = nodeName == "tr";
+                    break;
+                case "td":
+                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr";
+                    break;
+                case "th":
+                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr";
                     break;
                 case "h1":
                     isExplicitEnd = nodeName == "h2" || nodeName == "h3" || nodeName == "h4" || nodeName == "h5";
@@ -1841,7 +2010,16 @@ namespace HtmlAgilityPack
         {
             _currentattribute._valuestartindex = index;
             if (quote == '\'')
+            {
                 _currentattribute.QuoteType = AttributeValueQuote.SingleQuote;
+            }
+
+            _currentattribute.InternalQuoteType = _currentattribute.QuoteType;
+            
+            if (quote == 0)
+            {
+                _currentattribute.InternalQuoteType = AttributeValueQuote.None;
+            }
         }
 
         private bool PushNodeEnd(int index, bool close)
@@ -1933,16 +2111,11 @@ namespace HtmlAgilityPack
             _currentnode._namestartindex = index;
         }
 
-        private void PushNodeStart(HtmlNodeType type, int index)
+        private void PushNodeStart(HtmlNodeType type, int index, int lineposition)
         {
             _currentnode = CreateNode(type, index);
             _currentnode._line = _line;
-            _currentnode._lineposition = _lineposition;
-            if (type == HtmlNodeType.Element)
-            {
-                _currentnode._lineposition--;
-            }
-
+            _currentnode._lineposition = lineposition;
             _currentnode._streamposition = index;
         }
 
@@ -1958,52 +2131,59 @@ namespace HtmlAgilityPack
                 return;
             if (node.Name != "meta") // all nodes names are lowercase
                 return;
+            string charset = null;
             HtmlAttribute att = node.Attributes["http-equiv"];
-            if (att == null)
-                return;
-            if (string.Compare(att.Value, "content-type", StringComparison.OrdinalIgnoreCase) != 0)
-                return;
-            HtmlAttribute content = node.Attributes["content"];
-            if (content != null)
+            if (att != null)
             {
-                string charset = NameValuePairList.GetNameValuePairsValue(content.Value, "charset");
-                if (!string.IsNullOrEmpty(charset))
+                if (string.Compare(att.Value, "content-type", StringComparison.OrdinalIgnoreCase) != 0)
+                    return;
+                HtmlAttribute content = node.Attributes["content"];
+                if (content != null)
+                    charset = NameValuePairList.GetNameValuePairsValue(content.Value, "charset");
+            }
+            else
+            {
+                att = node.Attributes["charset"];
+                if (att != null)
+                    charset = att.Value;
+            }
+
+            if (!string.IsNullOrEmpty(charset))
+            {
+                // The following check fixes the the bug described at: http://htmlagilitypack.codeplex.com/WorkItem/View.aspx?WorkItemId=25273
+                if (string.Equals(charset, "utf8", StringComparison.OrdinalIgnoreCase))
+                    charset = "utf-8";
+                try
                 {
-                    // The following check fixes the the bug described at: http://htmlagilitypack.codeplex.com/WorkItem/View.aspx?WorkItemId=25273
-                    if (string.Equals(charset, "utf8", StringComparison.OrdinalIgnoreCase))
-                        charset = "utf-8";
-                    try
-                    {
-                        _declaredencoding = Encoding.GetEncoding(charset);
-                    }
-                    catch (ArgumentException)
-                    {
-                        _declaredencoding = null;
-                    }
+                    _declaredencoding = Encoding.GetEncoding(charset);
+                }
+                catch (ArgumentException)
+                {
+                    _declaredencoding = null;
+                }
 
-                    if (_onlyDetectEncoding)
-                    {
-                        throw new EncodingFoundException(_declaredencoding);
-                    }
+                if (_onlyDetectEncoding)
+                {
+                    throw new EncodingFoundException(_declaredencoding);
+                }
 
-                    if (_streamencoding != null)
-                    {
-#if SILVERLIGHT || PocketPC || METRO || NETSTANDARD
-						if (_declaredencoding.WebName != _streamencoding.WebName)
+                if (_streamencoding != null)
+                {
+#if SILVERLIGHT || PocketPC || METRO || NETSTANDARD1_3 || NETSTANDARD1_6
+                    if (_declaredencoding.WebName != _streamencoding.WebName)
 #else
-                        if (_declaredencoding != null)
-                            if (_declaredencoding.CodePage != _streamencoding.CodePage)
+                    if (_declaredencoding != null)
+                        if (_declaredencoding.CodePage != _streamencoding.CodePage)
 #endif
-                            {
-                                AddError(
-                                    HtmlParseErrorCode.CharsetMismatch,
-                                    _line, _lineposition,
-                                    _index, node.OuterHtml,
-                                    "Encoding mismatch between StreamEncoding: " +
-                                    _streamencoding.WebName + " and DeclaredEncoding: " +
-                                    _declaredencoding.WebName);
-                            }
-                    }
+                        {
+                            AddError(
+                                HtmlParseErrorCode.CharsetMismatch,
+                                _line, _lineposition,
+                                _index, node.OuterHtml,
+                                "Encoding mismatch between StreamEncoding: " +
+                                _streamencoding.WebName + " and DeclaredEncoding: " +
+                                _declaredencoding.WebName);
+                        }
                 }
             }
         }
