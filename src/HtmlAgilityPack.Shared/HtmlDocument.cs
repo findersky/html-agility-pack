@@ -1,9 +1,9 @@
-// Description: Html Agility Pack - HTML Parsers, selectors, traversors, manupulators.
-// Website & Documentation: http://html-agility-pack.net
+﻿// Description: Html Agility Pack - HTML Parsers, selectors, traversors, manupulators.
+// Website & Documentation: https://html-agility-pack.net
 // Forum & Issues: https://github.com/zzzprojects/html-agility-pack
 // License: https://github.com/zzzprojects/html-agility-pack/blob/master/LICENSE
-// More projects: http://www.zzzprojects.com/
-// Copyright � ZZZ Projects Inc. 2014 - 2017. All rights reserved.
+// More projects: https://zzzprojects.com/
+// Copyright © ZZZ Projects Inc. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -157,10 +157,13 @@ namespace HtmlAgilityPack
         /// </summary>
         public bool OptionOutputAsXml;
 
-        /// <summary>
-        /// If used together with <see cref="OptionOutputAsXml"/> and enabled, Xml namespaces in element names are preserved. Default is false.
-        /// </summary>
-        public bool OptionPreserveXmlNamespaces;
+        /// <summary>True to disable implicit end. An explicit end logic will be used instead.</summary>
+		public bool DisableImplicitEnd;
+
+		/// <summary>
+		/// If used together with <see cref="OptionOutputAsXml"/> and enabled, Xml namespaces in element names are preserved. Default is false.
+		/// </summary>
+		public bool OptionPreserveXmlNamespaces;
 
         /// <summary>
         /// Defines if attribute value output must be optimized (not bound with double quotes if it is possible). Default is false.
@@ -499,6 +502,11 @@ namespace HtmlAgilityPack
             if (comment == null)
             {
                 throw new ArgumentNullException("comment");
+            }
+
+            if (!comment.StartsWith("<!--") && !comment.EndsWith("-->"))
+            {
+                comment = "<!--" + comment + "-->";
             }
 
             HtmlCommentNode c = CreateComment();
@@ -1497,6 +1505,16 @@ namespace HtmlAgilityPack
 
                         _currentattribute._isFromParse = true;
 
+
+                        //  Add !,?,% and other special? 
+                        // or a isLetter with a "or" number check
+                        if (_c == '/')
+                        {
+                            PushAttributeNameEnd(_index - 1);
+                            _state = ParseState.AttributeBeforeEquals;
+                            continue;
+                        }
+
                         if (IsWhiteSpace(_c))
                         {
                             PushAttributeNameEnd(_index - 1);
@@ -1821,8 +1839,8 @@ namespace HtmlAgilityPack
                 // CHECK if parent must be implicitely closed
                 if (IsParentImplicitEnd())
                 {
-                    if (OptionOutputAsXml)
-                    {
+                    if (OptionOutputAsXml || DisableImplicitEnd)
+					{
                         forceExplicitEnd = true;
                     }
                     else
@@ -1931,13 +1949,16 @@ namespace HtmlAgilityPack
                     isExplicitEnd = nodeName == "table";
                     break;
                 case "tr":
-                    isExplicitEnd = nodeName == "tr";
+                    isExplicitEnd = nodeName == "tr" || nodeName == "tbody";
+                    break;
+                case "thead":
+                    isExplicitEnd = nodeName == "tbody";
                     break;
                 case "td":
-                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr";
+                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody";
                     break;
                 case "th":
-                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr";
+                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody";
                     break;
                 case "h1":
                     isExplicitEnd = nodeName == "h2" || nodeName == "h3" || nodeName == "h4" || nodeName == "h5";

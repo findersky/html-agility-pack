@@ -12,11 +12,11 @@
     <AssemblyName>HtmlAgilityPack</AssemblyName>
     <RootNamespace>HtmlAgilityPack</RootNamespace>
     <PackageId>HtmlAgilityPack</PackageId>
-    <Version>1.11.30</Version>
+    <Version>1.11.59</Version>
     <Authors>ZZZ Projects Inc.</Authors>
     <Company>ZZZ Projects Inc.</Company>
     <Product>Html Agility Pack</Product>
-    <Copyright>Copyright © ZZZ Projects Inc. 2014 - 2017</Copyright>
+    <Copyright>Copyright © ZZZ Projects Inc.</Copyright>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>HtmlAgilityPack.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>

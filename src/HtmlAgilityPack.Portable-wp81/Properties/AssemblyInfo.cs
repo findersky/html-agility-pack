@@ -1,6 +1,4 @@
-// HtmlAgilityPack V1.0 - Simon Mourier <simon underscore mourier at hotmail dot com>
-
-using System;
+﻿using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -21,15 +19,15 @@ using System.Security;
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("ZZZ Projects Inc.")]
 [assembly: AssemblyProduct("Html Agility Pack")]
-[assembly: AssemblyCopyright("Copyright � ZZZ Projects Inc.")]
-[assembly: AssemblyTrademark("SQL & .NET Tools")]
+[assembly: AssemblyCopyright("Copyright © ZZZ Projects Inc.")]
+[assembly: AssemblyTrademark("ZZZ Projects Inc.")]
 [assembly: AssemblyCulture("")]
 [assembly: ComVisible(true)]
 [assembly: Guid("643622ea-d2aa-4572-a2b2-6202b7fcd83f")]
-[assembly: AssemblyVersion("1.11.30")]
+[assembly: AssemblyVersion("1.11.59")]
 #if !PocketPC
-[assembly: AssemblyFileVersion("1.11.30")]
-[assembly: AssemblyInformationalVersion("1.11.30")]
+[assembly: AssemblyFileVersion("1.11.59")]
+[assembly: AssemblyInformationalVersion("1.11.59")]
 #if !SILVERLIGHT
 [assembly: AllowPartiallyTrustedCallers]
 #endif
@@ -43,7 +41,6 @@ using System.Security;
 // The command to use is something like:
 //      SN.EXE -k HtmlAgilityPack.snk
 //
-// Simon.
 //
 
 [assembly: AssemblyKeyName("")]
