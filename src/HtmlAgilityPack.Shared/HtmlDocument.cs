@@ -210,11 +210,16 @@ namespace HtmlAgilityPack
         /// </summary>
         public bool OptionWriteEmptyNodes;
 
-	    /// <summary>
-	    /// The max number of nested child nodes. 
-	    /// Added to prevent stackoverflow problem when a page has tens of thousands of opening html tags with no closing tags 
-	    /// </summary>
-	    public int OptionMaxNestedChildNodes = 0;
+        /// <summary>
+        /// Defines if empty nodes must be written without the additional space. Default is false.
+        /// </summary>
+        public bool OptionWriteEmptyNodesWithoutSpace;
+
+        /// <summary>
+        /// The max number of nested child nodes. 
+        /// Added to prevent stackoverflow problem when a page has tens of thousands of opening html tags with no closing tags 
+        /// </summary>
+        public int OptionMaxNestedChildNodes = 0;
 
 
 		#endregion
@@ -1956,19 +1961,19 @@ namespace HtmlAgilityPack
                     isExplicitEnd = nodeName == "table";
                     break;
                 case "tr":
-                    isExplicitEnd = nodeName == "tr" || nodeName == "tbody";
+                    isExplicitEnd = nodeName == "tr" || nodeName == "thead" || nodeName == "tbody" || nodeName == "tfoot";
                     break;
                 case "thead":
-                    isExplicitEnd = nodeName == "tbody";
+                    isExplicitEnd = nodeName == "tbody" || nodeName == "tfoot";
                     break;
                 case "tbody":
-                    isExplicitEnd = nodeName == "tbody";
+                    isExplicitEnd = nodeName == "tbody" || nodeName == "tfoot";
                     break;
                 case "td":
-                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody";
+                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody" || nodeName == "tfoot";
                     break;
                 case "th":
-                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody";
+                    isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody" || nodeName == "tfoot";
                     break;
                 case "h1":
                     isExplicitEnd = nodeName == "h2" || nodeName == "h3" || nodeName == "h4" || nodeName == "h5";
