@@ -421,6 +421,12 @@ namespace HtmlAgilityPack
                 return;
             }
 
+            if (_ownerdocument.OptionEnableBreakLineForInnerText && Name == "br")
+            {
+                sb.AppendLine();
+                return;
+            }
+
             if (_nodetype == HtmlNodeType.Text)
             {
                 sb.Append(((HtmlTextNode) this).Text);
@@ -1392,7 +1398,7 @@ namespace HtmlAgilityPack
 
 			return att.Value;
 #else
-			return GetAttributeValue<string>(name, def);
+			return GetAttributeValue<string>(name, def, null);
 #endif
         } 
 
@@ -1430,7 +1436,7 @@ namespace HtmlAgilityPack
 				return def;
 			}
 #else
-			return GetAttributeValue<int>(name, def);
+			return GetAttributeValue<int>(name, def, int.TryParse);
 #endif
 		}
 
@@ -1468,7 +1474,7 @@ namespace HtmlAgilityPack
 				return def;
 			}
 #else
-			return GetAttributeValue<bool>(name, def);
+			return GetAttributeValue<bool>(name, def, bool.TryParse);
 #endif
 		}
 
@@ -1485,7 +1491,7 @@ namespace HtmlAgilityPack
 		{
 			if (name == null)
 			{
-				throw new ArgumentNullException("name");
+				throw new ArgumentNullException(nameof(name));
 			}
 
 			if (!HasAttributes)
@@ -1507,6 +1513,51 @@ namespace HtmlAgilityPack
 			{
 				return def;
 			}
+		}
+
+		/// <summary>
+		/// Parser for attribute value.
+		/// </summary>
+		/// <typeparam name="T">The type to parse string value into</typeparam>
+		public delegate bool AttributeValueParser<T>(string value, out T result);
+
+		/// <summary>
+		/// Helper method to get the value of an attribute of this node as type T. If the attribute is not found
+		/// or if the attribute is not parsable to type T, the default value will be returned.
+		/// </summary>
+		/// <param name="name">The name of the attribute to get. May not be <c>null</c>.</param>
+		/// <param name="def">The default value to return if not found.</param>
+		/// <param name="parser">The parser used to convert string attribute value to T.</param>
+		/// <returns>The value of the attribute if found and parsable, the default value otherwise.</returns>
+		public T GetAttributeValue<T>(string name, T def, AttributeValueParser<T> parser)
+		{
+			if (name == null)
+			{
+				throw new ArgumentNullException(nameof(name));
+			}
+
+			if (!HasAttributes)
+			{
+				return def;
+			}
+
+			HtmlAttribute att = Attributes[name];
+			if (att?.Value == null)
+			{
+				return def;
+			}
+
+			if (att.Value is T value)
+			{
+				return value;
+			}
+
+			if (parser != null && parser(att.Value, out T parsedValue))
+			{
+				return parsedValue;
+			}
+
+			return def;
 		}
 #endif
 
@@ -1701,7 +1752,7 @@ namespace HtmlAgilityPack
 			}
 		}
 
-        /// <summary>Move a node already associated and append it to this node instead.</summary>
+        /// <summary>Move a node already associated and append it to this node instead (must be from a different document).</summary>
         /// <param name="child">The child node to move.</param>
 		public void MoveChild(HtmlNode child)
 		{
@@ -1720,7 +1771,7 @@ namespace HtmlAgilityPack
 			}
 		}
 
-        /// <summary>Move a children collection already associated and append it to this node instead.</summary>
+        /// <summary>Move a children collection already associated and append it to this node instead (must be from a different document).</summary>
         /// <param name="children">The children collection already associated to move to another node.</param>
 		public void MoveChildren(HtmlNodeCollection children)
 		{
@@ -2360,6 +2411,11 @@ namespace HtmlAgilityPack
 			{
 				quoteType = att.QuoteType;
 			}
+			else if(quoteType == AttributeValueQuote.InitialExceptWithoutValue)
+			{
+                // if the quote doesn't have value, use double quote (https://github.com/zzzprojects/html-agility-pack/issues/575)
+                quoteType = att.QuoteType == AttributeValueQuote.WithoutValue ? AttributeValueQuote.DoubleQuote : att.QuoteType;
+			}
 
 			var isWithoutValue = quoteType == AttributeValueQuote.WithoutValue;
 
@@ -2409,7 +2465,7 @@ namespace HtmlAgilityPack
 				if (!isWithoutValue)
 				{
 					var value = quoteType == AttributeValueQuote.DoubleQuote ? !att.Value.StartsWith("@") ? att.Value.Replace("\"", "&quot;") :
-				   att.Value : quoteType == AttributeValueQuote.SingleQuote ?  att.Value.Replace("'", "&#39;") : att.Value;
+					att.Value : quoteType == AttributeValueQuote.SingleQuote ?  att.Value.Replace("'", "&#39;") : att.Value;
 					if (_ownerdocument.OptionOutputOptimizeAttributeValues)
 						if (att.Value.IndexOfAny(new char[] {(char) 10, (char) 13, (char) 9, ' '}) < 0)
 							outText.Write(" " + name + "=" + att.Value);

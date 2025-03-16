@@ -119,6 +119,9 @@ namespace HtmlAgilityPack
         /// </summary>
         public bool OptionEmptyCollection = false;
 
+        /// <summary>True of the whole &lt;![CDATA[ block should be treated as a single comment.</summary>
+        public bool OptionTreatCDataBlockAsComment;
+
         /// <summary>True to disable, false to enable the server side code.</summary>
         public bool DisableServerSideCode = false;
 
@@ -220,6 +223,11 @@ namespace HtmlAgilityPack
         /// Added to prevent stackoverflow problem when a page has tens of thousands of opening html tags with no closing tags 
         /// </summary>
         public int OptionMaxNestedChildNodes = 0;
+
+        /// <summary>
+        /// Enable to create a "new line" for tag such as "br"
+        /// </summary>
+        public bool OptionEnableBreakLineForInnerText;
 
 
 		#endregion
@@ -1294,24 +1302,38 @@ namespace HtmlAgilityPack
             {
 	            if (Text[_index] == '!' || Text[_index] == '?')
                 {
-					PushNodeStart(HtmlNodeType.Comment, _index - 1, _lineposition -1);
-                    PushNodeNameStart(true, _index);
-                    PushNodeNameEnd(_index + 1);
-                    _state = ParseState.Comment;
-                    if (_index < (Text.Length - 2))
+                    if (OptionTreatCDataBlockAsComment && Text.Substring(_index).StartsWith("![CDATA[", StringComparison.OrdinalIgnoreCase))
                     {
-                        if ((Text[_index + 1] == '-') &&
-                            (Text[_index + 2] == '-'))
-                        {
-                            _fullcomment = true;
-                        }
-                        else
-                        {
-                            _fullcomment = false;
-						}
-                    }
+                        PushNodeStart(HtmlNodeType.Comment, _index - 1, _lineposition - 1);
+                        PushNodeNameStart(true, _index);
+                        PushNodeNameEnd(_index + 1);
 
-                    return true;
+                        _state = ParseState.PcDataComment;
+
+                        return true;
+                    }
+                    else
+                    {
+                        PushNodeStart(HtmlNodeType.Comment, _index - 1, _lineposition - 1);
+                        PushNodeNameStart(true, _index);
+                        PushNodeNameEnd(_index + 1);
+
+                        _state = ParseState.Comment;
+                        if (_index < (Text.Length - 2))
+                        {
+                            if ((Text[_index + 1] == '-') &&
+                                (Text[_index + 2] == '-'))
+                            {
+                                _fullcomment = true;
+                            }
+                            else
+                            {
+                                _fullcomment = false;
+                            }
+                        }
+
+                        return true;
+                    }                   
                 }
             }
 
@@ -1355,6 +1377,9 @@ namespace HtmlAgilityPack
             while (_index < Text.Length)
             {
                 _c = Text[_index];
+#if DEBUG
+                char _cChar = Text[_index];
+#endif
                 IncrementPosition();
 
                 switch (_state)
@@ -1702,6 +1727,23 @@ namespace HtmlAgilityPack
 
                         break;
 
+                    case ParseState.PcDataComment:
+                        if (_c == '>' && _index < Text.Length && Text[_index - 3] == ']' && Text[_index - 2] == ']')
+                        {
+                            if (!PushNodeEnd(_index, false))
+                            {
+                                // stop parsing
+                                _index = Text.Length;
+                                break;
+                            }
+
+                            _state = ParseState.Text;
+                            PushNodeStart(HtmlNodeType.Text, _index, _lineposition);
+                            continue;
+                        }
+
+                        break;
+
                     case ParseState.ServerSideCode:
                         if (_c == '%')
                         {
@@ -1969,6 +2011,12 @@ namespace HtmlAgilityPack
                 case "tbody":
                     isExplicitEnd = nodeName == "tbody" || nodeName == "tfoot";
                     break;
+                case "caption":
+                    isExplicitEnd = nodeName == "tr" || nodeName == "thead" || nodeName == "tbody" || nodeName == "tfoot" || nodeName == "colgroup";
+                    break;
+                case "colgroup":
+                    isExplicitEnd = nodeName == "tr" || nodeName == "thead" || nodeName == "tbody" || nodeName == "tfoot";
+                    break;
                 case "td":
                     isExplicitEnd = nodeName == "td" || nodeName == "th" || nodeName == "tr" || nodeName == "tbody" || nodeName == "tfoot";
                     break;
@@ -2227,7 +2275,7 @@ namespace HtmlAgilityPack
             }
         }
 
-        #endregion
+#endregion
 
         #region Nested type: ParseState
 
@@ -2245,7 +2293,8 @@ namespace HtmlAgilityPack
             Comment,
             QuotedAttributeValue,
             ServerSideCode,
-            PcData
+            PcData,
+            PcDataComment
         }
 
         #endregion
